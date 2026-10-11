@@ -104,3 +104,40 @@ class TransformerDecoderBlock(nn.Module):
         )
 
         return x
+
+class TransformerDecoder(nn.Module):
+
+    def __init__(
+        self,
+        num_layers: int,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        dropout: float = 0.1
+    ):
+        super().__init__()
+
+        self.layers = nn.ModuleList(
+            [
+                TransformerDecoderBlock(
+                    d_model=d_model,
+                    num_heads=num_heads,
+                    d_ff=d_ff,
+                    dropout=dropout
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        memory: torch.Tensor,
+        tgt_mask: torch.Tensor | None = None,
+        memory_mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
+
+        for layer in self.layers:
+            x = layer(x, memory, tgt_mask, memory_mask)
+
+        return x
