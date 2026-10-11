@@ -104,5 +104,3 @@ class TransformerDecoderBlock(nn.Module):
         )
 
         return x
-
-        
