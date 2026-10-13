@@ -1,3 +1,4 @@
+# File: src/train.py
 
 import random
 from pathlib import Path
@@ -14,55 +15,102 @@ from src.collate import make_collate_fn
 from src.transformer import Transformer
 
 
-# -------------------------
-# Configuration
-# -------------------------
+# ============================================================
+# 1. Configuration
+# ============================================================
 
 SEED = 42
+
 BATCH_SIZE = 16
 MAX_SEQ_LEN = 64
-TRAIN_LIMIT = 5000
-VAL_LIMIT = 500
-EPOCHS = 5
+
+TRAIN_LIMIT = 20_000
+VAL_LIMIT = 1_000
+
+EPOCHS = 50
+PATIENCE = 7
+MIN_DELTA = 0.01
+
 LEARNING_RATE = 3e-4
+WEIGHT_DECAY = 1e-4
+DROPOUT = 0.2
 
 PAD = SimpleTokenizer.PAD
+
+DEVICE = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
 
 random.seed(SEED)
 torch.manual_seed(SEED)
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
 
+# Reproducibility; may reduce performance slightly.
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
+
+# ============================================================
+# 2. Tokenizers
+# ============================================================
 
 def build_tokenizers(train_split):
-    """Build separate source and target vocabularies."""
+    """Build separate English and French vocabularies."""
 
     src_tokenizer = SimpleTokenizer()
     tgt_tokenizer = SimpleTokenizer()
 
     src_tokenizer.train(
-        (row["translation"]["en"] for row in train_split),
+        (
+            row["translation"]["en"]
+            for row in train_split
+        ),
         min_frequency=2,
     )
 
     tgt_tokenizer.train(
-        (row["translation"]["fr"] for row in train_split),
+        (
+            row["translation"]["fr"]
+            for row in train_split
+        ),
         min_frequency=2,
     )
 
     return src_tokenizer, tgt_tokenizer
 
 
-def make_attention_masks(src, tgt_input, src_pad_id, tgt_pad_id):
+# ============================================================
+# 3. Attention masks
+# ============================================================
+
+def make_attention_masks(
+    src,
+    tgt_input,
+    src_pad_id,
+    tgt_pad_id,
+):
     """
-    True means blocked in our MultiHeadAttention implementation.
+    True means blocked in our attention implementation.
+
+    Source mask: blocks source padding keys.
+    Target mask: blocks target padding keys and future tokens.
     """
 
-    # (B, 1, 1, S): block source padding keys.
-w
+    # Shape: (B, 1, 1, S)
+    src_padding_mask = (
+        src == src_pad_id
+    )[:, None, None, :]
+
+    # Shape: (B, 1, 1, T)
+    tgt_padding_mask = (
+        tgt_input == tgt_pad_id
+    )[:, None, None, :]
 
     target_length = tgt_input.size(1)
 
+    # Shape: (T, T)
     # True above the diagonal blocks future positions.
     causal_mask = torch.triu(
         torch.ones(
@@ -83,6 +131,10 @@ w
     return src_padding_mask, tgt_mask
 
 
+# ============================================================
+# 4. One training or validation epoch
+# ============================================================
+
 def run_epoch(
     model,
     loader,
@@ -102,8 +154,8 @@ def run_epoch(
         tgt = batch["tgt"].to(DEVICE)
 
         # Teacher forcing:
-        # decoder input: BOS ... previous token
-        # labels:        next token ... EOS
+        # Decoder input: BOS, token_1, ..., token_(n-1)
+        # Labels:        token_1, ..., token_n, EOS
         tgt_input = tgt[:, :-1]
         labels = tgt[:, 1:]
 
@@ -134,7 +186,7 @@ def run_epoch(
             if training:
                 loss.backward()
 
-                # Helps prevent exploding gradients.
+                # Prevent excessively large gradients.
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(),
                     max_norm=1.0,
@@ -142,9 +194,10 @@ def run_epoch(
 
                 optimizer.step()
 
-        # Average by non-padding target tokens, not batches.
-
-       valid_tokens = labels.ne(tgt_pad_id).sum().item()
+        # Ignore padding tokens when averaging epoch loss.
+        valid_tokens = (
+            labels != tgt_pad_id
+        ).sum().item()
 
         total_loss += loss.item() * valid_tokens
         total_tokens += valid_tokens
@@ -152,25 +205,39 @@ def run_epoch(
     return total_loss / max(total_tokens, 1)
 
 
+# ============================================================
+# 5. Main training pipeline
+# ============================================================
+
 def main():
     print("Device:", DEVICE)
 
-    dataset = load_translation_dataset()
-    all_train = dataset["train"]
+    # --------------------------------------------------------
+    # Load and split dataset
+    # --------------------------------------------------------
 
-    # Split first; vocabulary is learned only from training data.
-    splits = all_train.train_test_split(
+    dataset = load_translation_dataset()
+    all_data = dataset["train"]
+
+    splits = all_data.train_test_split(
         test_size=0.1,
         seed=SEED,
     )
 
-    train_split = splits["train"]
-    val_split = splits["test"]
+    # Shuffle before selecting subsets so we don't simply take
+    # the first portion of a potentially ordered book dataset.
+    train_split = splits["train"].shuffle(
+        seed=SEED
+    )
 
-    # Keep the first run manageable.
+    val_split = splits["test"].shuffle(
+        seed=SEED
+    )
+
     train_split = train_split.select(
         range(min(TRAIN_LIMIT, len(train_split)))
     )
+
     val_split = val_split.select(
         range(min(VAL_LIMIT, len(val_split)))
     )
@@ -178,10 +245,27 @@ def main():
     print("Training examples:", len(train_split))
     print("Validation examples:", len(val_split))
 
-    src_tokenizer, tgt_tokenizer = build_tokenizers(train_split)
+    # --------------------------------------------------------
+    # Build vocabularies using training data only
+    # --------------------------------------------------------
 
-    print("Source vocabulary:", src_tokenizer.vocab_size)
-    print("Target vocabulary:", tgt_tokenizer.vocab_size)
+    src_tokenizer, tgt_tokenizer = build_tokenizers(
+        train_split
+    )
+
+    print(
+        "Source vocabulary:",
+        src_tokenizer.vocab_size,
+    )
+
+    print(
+        "Target vocabulary:",
+        tgt_tokenizer.vocab_size,
+    )
+
+    # --------------------------------------------------------
+    # Create PyTorch datasets
+    # --------------------------------------------------------
 
     train_data = TranslationDataset(
         train_split,
@@ -200,13 +284,17 @@ def main():
     src_pad_id = src_tokenizer.token_to_id[PAD]
     tgt_pad_id = tgt_tokenizer.token_to_id[PAD]
 
-    collate_fn = make_collate_fn(src_pad_id, tgt_pad_id)
+    collate_fn = make_collate_fn(
+        src_pad_id,
+        tgt_pad_id,
+    )
 
     train_loader = DataLoader(
         train_data,
         batch_size=BATCH_SIZE,
         shuffle=True,
         collate_fn=collate_fn,
+        pin_memory=(DEVICE.type == "cuda"),
     )
 
     val_loader = DataLoader(
@@ -214,7 +302,12 @@ def main():
         batch_size=BATCH_SIZE,
         shuffle=False,
         collate_fn=collate_fn,
+        pin_memory=(DEVICE.type == "cuda"),
     )
+
+    # --------------------------------------------------------
+    # Create model
+    # --------------------------------------------------------
 
     config = TransformerConfig(
         src_vocab_size=src_tokenizer.vocab_size,
@@ -224,11 +317,20 @@ def main():
         num_encoder_layers=2,
         num_decoder_layers=2,
         d_ff=256,
-        dropout=0.1,
+        dropout=DROPOUT,
         max_seq_len=MAX_SEQ_LEN,
     )
 
     model = Transformer(config).to(DEVICE)
+
+    print(
+        "Trainable parameters:",
+        sum(
+            parameter.numel()
+            for parameter in model.parameters()
+            if parameter.requires_grad
+        ),
+    )
 
     # Padding labels do not contribute to the loss.
     criterion = nn.CrossEntropyLoss(
@@ -238,30 +340,51 @@ def main():
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
+    )
+
+    # --------------------------------------------------------
+    # Checkpoint and early-stopping configuration
+    # --------------------------------------------------------
+
+    output_dir = Path("checkpoints")
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    checkpoint_path = (
+        output_dir / "best_transformer.pt"
     )
 
     best_val_loss = float("inf")
-    output_dir = Path("checkpoints")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    epochs_without_improvement = 0
+
+    print("\nStarting training...\n")
+
+    # --------------------------------------------------------
+    # Training loop
+    # --------------------------------------------------------
 
     for epoch in range(1, EPOCHS + 1):
+
         train_loss = run_epoch(
-            model,
-            train_loader,
-            optimizer,
-            criterion,
-            src_pad_id,
-            tgt_pad_id,
+            model=model,
+            loader=train_loader,
+            optimizer=optimizer,
+            criterion=criterion,
+            src_pad_id=src_pad_id,
+            tgt_pad_id=tgt_pad_id,
             training=True,
         )
 
         val_loss = run_epoch(
-            model,
-            val_loader,
-            optimizer,
-            criterion,
-            src_pad_id,
-            tgt_pad_id,
+            model=model,
+            loader=val_loader,
+            optimizer=optimizer,
+            criterion=criterion,
+            src_pad_id=src_pad_id,
+            tgt_pad_id=tgt_pad_id,
             training=False,
         )
 
@@ -271,26 +394,59 @@ def main():
             f"validation loss: {val_loss:.4f}"
         )
 
+        # Save every new best checkpoint.
         if val_loss < best_val_loss:
+            improvement = best_val_loss - val_loss
             best_val_loss = val_loss
 
             torch.save(
                 {
-                    "model_state_dict": model.state_dict(),
+                    "model_state_dict": (
+                        model.state_dict()
+                    ),
                     "config": config.__dict__,
-                    "src_token_to_id": src_tokenizer.token_to_id,
-                    "tgt_token_to_id": tgt_tokenizer.token_to_id,
+                    "src_token_to_id": (
+                        src_tokenizer.token_to_id
+                    ),
+                    "tgt_token_to_id": (
+                        tgt_tokenizer.token_to_id
+                    ),
                     "src_pad_id": src_pad_id,
                     "tgt_pad_id": tgt_pad_id,
                     "best_val_loss": best_val_loss,
+                    "best_epoch": epoch,
                 },
-                output_dir / "best_transformer.pt",
+                checkpoint_path,
             )
 
-            print("Saved best checkpoint.")
+            print(
+                f"Saved best checkpoint "
+                f"(epoch {epoch}, "
+                f"validation loss {best_val_loss:.4f})."
+            )
 
-    print("Training complete.")
+            if improvement >= MIN_DELTA:
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+
+        else:
+            epochs_without_improvement += 1
+
+        # Stop when validation performance stops improving.
+        if epochs_without_improvement >= PATIENCE:
+            print(
+                f"\nEarly stopping at epoch {epoch}."
+            )
+            print(
+                f"Best validation loss: "
+                f"{best_val_loss:.4f}"
+            )
+            break
+
+    print("\nTraining complete.")
     print("Best validation loss:", best_val_loss)
+    print("Best checkpoint:", checkpoint_path)
 
 
 if __name__ == "__main__":

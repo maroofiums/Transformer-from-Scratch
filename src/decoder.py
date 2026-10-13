@@ -5,26 +5,23 @@ from src.attention import MultiHeadAttention
 from src.feed_forward import PositionWiseFeedForward
 
 
-def create_causal_mask(
-    seq_len: int,
-    device: torch.device | None = None
-) -> torch.Tensor:
 
+import torch
+
+
+def create_causal_mask(seq_len, device=None):
     """
-    Returns a Boolean mask of shape (seq_len, seq_len).
-
-    True = block attention
-    False = allow attention
+    True means the position is blocked.
+    Prevents each decoder position from seeing future tokens.
     """
-
     return torch.triu(
         torch.ones(
             seq_len,
             seq_len,
             dtype=torch.bool,
-            device=device
+            device=device,
         ),
-        diagonal=1
+        diagonal=1,
     )
 
 

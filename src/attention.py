@@ -31,10 +31,13 @@ def scaled_dot_product_attention(
         k.transpose(-2, -1)
     ) / math.sqrt(q.size(-1))
 
+
     if mask is not None:
+        mask = mask.to(device=scores.device)
+
         scores = scores.masked_fill(
             mask,
-            float('-inf')
+            float("-inf"),
         )
 
     weights = torch.softmax(scores, dim=-1)
