@@ -1,8 +1,6 @@
 import torch
 from torch.utils.data import Dataset
 
-from src.tokenizer import SimpleTokenizer
-
 
 class TranslationDataset(Dataset):
     def __init__(
@@ -20,7 +18,7 @@ class TranslationDataset(Dataset):
 
 
     def __len__(self):
-        
+
         return len(self.dataset_split)
 
     def __getitem__(self, index):
@@ -45,11 +43,8 @@ class TranslationDataset(Dataset):
         ]
 
         return {
-            "src": torch.Tensor(source_ids, dtype=torch.long),
-            "tgt": torch.Tensor(target_ids, dtype=torch.long),
+            "src": torch.tensor(source_ids, dtype=torch.long),
+            "tgt": torch.tensor(target_ids, dtype=torch.long),
             "source_text": source_text,
             "target_text": target_text
         }
-
-
-        
