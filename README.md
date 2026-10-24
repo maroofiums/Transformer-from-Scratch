@@ -1,159 +1,167 @@
-# Transformer from Scratch
+# Transformer from Scratch with PyTorch
 
-An educational **encoder–decoder Transformer built with PyTorch** for English-to-French neural machine translation. The goal is to understand the core components of the Transformer architecture by implementing them as separate modules rather than relying on a prebuilt `nn.Transformer`.
-
-> **Project status:** Learning project / work in progress. Translation quality and end-to-end execution should be validated before treating this as a production-ready translation system.
+A Transformer-based neural machine translation model built from scratch using PyTorch. This project explores the internal mechanics of encoder-decoder Transformers, including self-attention, positional encoding, masking, teacher forcing, and autoregressive decoding.
 
 ## Architecture
 
-The model follows the encoder–decoder design introduced in *Attention Is All You Need*.
-
 ```mermaid
 flowchart TD
-    A["English source sentence"] --> B["Source tokenizer"]
-    B --> C["Source token IDs"]
-    C --> D["Token embeddings + positional encoding"]
-    D --> E["Transformer encoder × N"]
-    E --> F["Encoder memory"]
-    G["French target sentence"] --> H["Target tokenizer"]
-    H --> I["Shift target tokens for teacher forcing"]
-    I --> J["Token embeddings + positional encoding"]
-    J --> K["Masked multi-head self-attention"]
-    K --> L["Encoder–decoder cross-attention"]
-    F --> L
-    L --> M["Feed-forward network"]
-    M --> N["Transformer decoder × N"]
-    N --> O["Linear output projection"]
-    O --> P["Next-token logits"]
-    P --> Q["Cross-entropy loss"]
+    A["English Input Sentence"] --> B["Source Tokenizer"]
+    B --> C["Token IDs + Padding"]
+    C --> D["Token Embeddings"]
+    D --> E["Positional Encoding"]
+    E --> F["Transformer Encoder"]
+
+    F --> G["Encoder Memory"]
+
+    H["French Target Sentence"] --> I["Target Tokenizer"]
+    I --> J["Shifted Target Tokens"]
+    J --> K["Token Embeddings"]
+    K --> L["Positional Encoding"]
+    L --> M["Masked Multi-Head Self-Attention"]
+    M --> N["Cross-Attention"]
+    G --> N
+    N --> O["Feed-Forward Network"]
+    O --> P["Linear Projection"]
+    P --> Q["Next-Token Logits"]
+    Q --> R["Cross-Entropy Loss"]
+
+    S["Greedy Autoregressive Decoding"] -. "Inference" .-> M
+    Q -. "Predicted next token" .-> S
 ```
 
-### Inference flow
+## Key Features
 
-```mermaid
-flowchart LR
-    A["English input"] --> B["Tokenize"]
-    B --> C["Encoder"]
-    C --> D["Encoder memory"]
-    D --> E["Decoder"]
-    F["BOS + generated French tokens"] --> E
-    E --> G["Next-token logits"]
-    G --> H["Choose next token"]
-    H --> I{"EOS reached?"}
-    I -- No --> F
-    I -- Yes --> J["Decoded French text"]
-```
+- Custom encoder-decoder Transformer architecture.
+- Sinusoidal positional encoding.
+- Multi-head scaled dot-product attention.
+- Causal masking to prevent access to future target tokens.
+- Padding masks to ignore padded tokens during attention and loss calculation.
+- Teacher forcing during training.
+- Greedy autoregressive decoding for inference.
+- AdamW optimization, gradient clipping, and early stopping.
+- Best-validation-loss checkpointing.
+- GPU acceleration when CUDA is available.
 
-## Core concepts implemented
+## Tech Stack
 
-- **Scaled dot-product attention** — computes attention weights from queries, keys, and values.
-- **Multi-head attention** — lets the model attend to different representation subspaces.
-- **Sinusoidal positional encoding** — adds sequence-position information to token embeddings.
-- **Encoder and decoder blocks** — combine attention, feed-forward layers, residual connections, and layer normalization.
-- **Causal masking** — prevents decoder positions from attending to future target tokens.
-- **Padding masks** — prevent padded tokens from being used as attention keys.
-- **Teacher forcing** — feeds the correct previous target tokens to the decoder during training.
-- **Validation and checkpointing** — tracks validation loss and saves a best checkpoint in the training pipeline.
+- Python
+- PyTorch
+- Hugging Face Datasets
+- Custom word-level tokenizers
+- Matplotlib or other tools for optional training visualizations
 
 ## Dataset
 
-This project uses the English–French configuration of the Hugging Face dataset [`Helsinki-NLP/opus_books`](https://huggingface.co/datasets/Helsinki-NLP/opus_books).
+The project uses the English-French configuration of the Hugging Face dataset:
 
-The code uses separate custom word-level tokenizers for English and French. Word-level tokenization is simple to understand, but rare and unseen words may map to the unknown-token symbol.
+[`Helsinki-NLP/opus_books`](https://huggingface.co/datasets/Helsinki-NLP/opus_books)
 
-## Project structure
+The training script creates training and validation splits. Dataset limits are configurable to support experiments with different training sizes.
+
+## Project Structure
 
 ```text
-Transformer-from-Scratch/
-└── src/
-    ├── config.py
-    ├── positional_encoding.py
-    ├── attention.py
-    ├── feed_forward.py
-    ├── encoder.py
-    ├── decoder.py
-    ├── transformer.py
-    ├── data.py
-    ├── tokenizer.py
-    ├── translation_dataset.py
-    ├── collate.py
-    ├── train.py
-    └── translate.py
+transformer-translation/
+├── src/
+│   ├── config.py
+│   ├── positional_encoding.py
+│   ├── attention.py
+│   ├── feed_forward.py
+│   ├── encoder.py
+│   ├── decoder.py
+│   ├── transformer.py
+│   ├── data.py
+│   ├── tokenizer.py
+│   ├── translation_dataset.py
+│   ├── collate.py
+│   ├── train.py
+│   └── translate.py
+├── checkpoints/
+│   └── best_transformer.pt
+├── requirements.txt
+└── README.md
 ```
 
-## Setup
+*The structure above represents the intended project layout; adjust filenames and checkpoint locations to match your repository.*
 
-Clone the repository:
+## Installation
+
+Clone the repository and enter its directory:
 
 ```bash
 git clone https://github.com/maroofiums/Transformer-from-Scratch.git
-cd Transformer-from-Scratch
+cd transformer-translation
 ```
 
-Install the main dependencies:
+Install dependencies:
 
 ```bash
-python -m pip install torch datasets
+pip install torch datasets
 ```
 
-Use a Python environment compatible with your installed PyTorch build. For GPU training, install the PyTorch build that matches your CUDA setup; CPU training is also possible.
+Ensure that the `src` directory is importable as a Python package. If required, add an empty `src/__init__.py` file.
 
 ## Training
 
-From the repository root, run:
+Run the training module from the project root:
 
 ```bash
 python -m src.train
 ```
 
-The training script loads the dataset, builds tokenizers, creates the model and data loaders, and runs training and validation. Check `src/train.py` to adjust the dataset limits, batch size, maximum sequence length, model configuration, learning rate, and early-stopping settings.
+The training script configures the dataset, tokenizers, model, optimizer, attention masks, and validation loop. It saves the checkpoint with the best validation loss and stops early when validation performance no longer improves sufficiently.
 
-A successful run should produce a checkpoint at the path configured by the training script, typically:
+Review the configuration in `src/train.py` before training, especially:
 
-```text
-checkpoints/best_transformer.pt
-```
+- Training and validation dataset limits
+- Batch size
+- Maximum sequence length
+- Number of epochs and patience
+- Learning rate and weight decay
+- Transformer dimensions and dropout
 
 ## Translation
 
-The inference entry point is:
+After training, run:
 
 ```bash
 python -m src.translate
 ```
 
-The translation script expects a compatible trained checkpoint. Because the model and inference interfaces are still being developed, verify that the encoder/decoder method names and checkpoint configuration agree between `src/transformer.py` and `src/translate.py` before relying on the generated translations.
+Check that the inference script loads the same checkpoint path and reconstructs the model with the saved configuration and tokenizer vocabularies.
 
-## Training objective
+## How the Transformer Works
 
-For each target sentence, training uses shifted decoder inputs and labels:
+1. **Tokenization:** Sentences are converted into token IDs, including special tokens such as padding, beginning-of-sequence, unknown, and end-of-sequence tokens.
+2. **Embedding:** Each token ID is mapped to a dense vector.
+3. **Positional encoding:** Position information is added to token embeddings.
+4. **Encoder:** Self-attention allows source tokens to incorporate contextual information from other source tokens.
+5. **Decoder:** Masked self-attention processes previously available target tokens. Cross-attention uses the encoder output to condition predictions on the English input.
+6. **Training:** The model predicts the next French token using shifted target sequences. Cross-entropy loss ignores padding tokens.
+7. **Inference:** Greedy decoding repeatedly selects the most probable next token until an end-of-sequence token or the maximum sequence length is reached.
 
-- **Decoder input:** `<BOS> Je suis ...`
-- **Expected labels:** `Je suis ... <EOS>`
+## Current Limitations
 
-The model produces a vocabulary-sized logit vector at each target position. Cross-entropy loss compares those logits with the expected next token, while padding labels are ignored.
+- The word-level tokenizer can struggle with rare words, names, and unseen vocabulary.
+- Small training subsets and limited model capacity can reduce translation quality.
+- Training for too long can cause overfitting, so validation loss and checkpoint selection matter.
+- Greedy decoding may produce repetitive or grammatically incorrect translations.
+- A saved checkpoint is not evidence of good translation quality by itself; evaluate the model on held-out examples.
 
-## Limitations
+## Future Improvements
 
-- The custom word-level tokenizer handles rare words less effectively than subword tokenizers such as BPE or SentencePiece.
-- Translation quality depends on the amount and diversity of training data, model capacity, and training duration.
-- A low training loss does not guarantee good translation quality; validation metrics and held-out examples are important.
-- Greedy decoding can produce repetitive or grammatically incorrect text.
-- The project is intended for learning and experimentation, not production translation.
+- Replace word-level tokenization with BPE or SentencePiece.
+- Add BLEU or chrF evaluation on a held-out test set.
+- Compare greedy decoding with beam search.
+- Plot training and validation loss.
+- Perform controlled experiments with model dimensions, dropout, and dataset size.
+- Compare the custom implementation with a pretrained translation baseline.
 
-## Roadmap
+## Learning Objectives
 
-- [ ] Validate a complete training-to-inference run.
-- [ ] Add held-out translation examples and BLEU/chrF evaluation.
-- [ ] Plot training and validation loss.
-- [ ] Compare greedy decoding with beam search.
-- [ ] Experiment with BPE or SentencePiece tokenization.
-- [ ] Document reproducible settings and measured results.
+This project is intended as a practical study of Transformer internals rather than a claim of state-of-the-art translation performance. It provides hands-on experience with attention, masking, sequence modeling, training loops, and inference.
 
-## Learning objective
+## License
 
-The purpose of this repository is to make the internal mechanics of encoder–decoder Transformers easier to study: attention, masks, positional information, teacher forcing, optimization, and autoregressive generation.
-
-## Reference
-
-Vaswani et al., [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762).
+Choose and add an appropriate open-source license before distributing the project.
