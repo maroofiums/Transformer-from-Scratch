@@ -1,4 +1,3 @@
-
 import torch
 
 from src.config import TransformerConfig
@@ -44,6 +43,37 @@ def load_model():
     return model, src_tokenizer, tgt_tokenizer, checkpoint
 
 
+def select_next_token(
+    logits: torch.Tensor,
+    temperature: float = 1.0,
+    do_sample: bool = True,
+) -> int:
+    """
+    Select one token from the model's next-token logits.
+
+    temperature:
+        Lower values make the distribution sharper.
+        Higher values make the distribution flatter.
+    do_sample:
+        If False, use greedy decoding (argmax).
+    """
+    if temperature <= 0:
+        raise ValueError("temperature must be greater than 0")
+
+    if not do_sample:
+        return logits.argmax(dim=-1).item()
+
+    scaled_logits = logits / temperature
+    probabilities = torch.softmax(scaled_logits, dim=-1)
+
+    next_token = torch.multinomial(
+        probabilities,
+        num_samples=1,
+    )
+
+    return next_token.item()
+
+
 @torch.inference_mode()
 def translate(
     model,
@@ -51,7 +81,12 @@ def translate(
     tgt_tokenizer,
     sentence,
     max_new_tokens=64,
+    temperature=1.0,
+    do_sample=True,
 ):
+    if temperature <= 0:
+        raise ValueError("temperature must be greater than 0")
+
     src_ids = src_tokenizer.encode(sentence)
 
     max_len = model.config.max_seq_len
@@ -71,7 +106,6 @@ def translate(
     src_pad_id = src_tokenizer.token_to_id[
         SimpleTokenizer.PAD
     ]
-
     src_mask = (src == src_pad_id)[:, None, None, :]
 
     memory = model.encode(
@@ -101,7 +135,11 @@ def translate(
             memory_mask=src_mask,
         )
 
-        next_token = logits[0, -1].argmax().item()
+        next_token = select_next_token(
+            logits[0, -1],
+            temperature=temperature,
+            do_sample=do_sample,
+        )
         generated.append(next_token)
 
         if next_token == eos_id:
@@ -116,6 +154,8 @@ def main():
     print("Device:", DEVICE)
     print("Best validation loss:", checkpoint["best_val_loss"])
     print("Type 'quit' to exit.")
+    print("Enter temperature (e.g. 0.7, 1.0, 1.5).")
+    print("Use 0 for greedy decoding.")
 
     while True:
         sentence = input("\nEnglish: ").strip()
@@ -126,11 +166,16 @@ def main():
         if not sentence:
             continue
 
+        raw_temperature = input("Temperature [1.0]: ").strip()
+        temperature = float(raw_temperature or "1.0")
+
         result = translate(
             model,
             src_tok,
             tgt_tok,
             sentence,
+            temperature=max(temperature, 1e-8),
+            do_sample=(temperature > 0),
         )
 
         print("French:", result)
