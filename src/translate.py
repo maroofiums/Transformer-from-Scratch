@@ -168,13 +168,16 @@ def main():
 
         raw_temperature = input("Temperature [1.0]: ").strip()
         temperature = float(raw_temperature or "1.0")
+        if temperature < 0:
+            print("Temperature cannot be negative.")
+            continue
 
         result = translate(
             model,
             src_tok,
             tgt_tok,
             sentence,
-            temperature=max(temperature, 1e-8),
+            temperature=(temperature if temperature > 0 else 1.0),
             do_sample=(temperature > 0),
         )
 
